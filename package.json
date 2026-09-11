@@ -8,7 +8,10 @@
   "repository": { "type": "git", "url": "git+https://github.com/zyf-maker/dsh-market-own.git" },
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
-    "client": { "platform": "web" }
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-settings"]
+    }
   },
   "exports": {
     ".": "./index.js",
