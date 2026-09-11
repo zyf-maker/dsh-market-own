@@ -2,19 +2,23 @@
  * DSH Market (own) — client half.
  *
  * Loaded by the host's module loader, which injects `require`. Only `react` is
- * required, deliberately: dshmarket additionally depends on four named exports
- * of the host's ui-primitives and disables itself when any is missing, so a host
- * older than rc.6 shows nothing at all. A market that renders its own markup
+ * required, deliberately: dshmarket additionally depended on four named exports
+ * of the host's ui-primitives and disabled itself when any was missing, so a host
+ * older than rc.6 showed nothing at all. A market that renders its own markup
  * from one stable dependency keeps working across host versions.
  *
- * The half is hand-written in the loader's factory format rather than bundled,
- * because the format is small and a build step would add a toolchain to a plugin
- * whose entire job is to read JSON and render a list.
+ * Hand-written in the loader's factory format rather than bundled, because the
+ * format is small and a build step would add a toolchain to a plugin whose entire
+ * job is to read JSON and render a list.
  *
  * Registration contract, taken from the host's own settings seat:
  *   ctx.slots.inject('settings.section', () => ctx.slots.register(descriptor, Component))
- * `descriptor` names the seat, gives the section an id and an order, and
- * `label()` supplies the navigation title.
+ *
+ * Layout: two columns. The left column is the category index — every type the
+ * catalog uses, with its plugin count — which is both the type statistic and the
+ * filter control. The right column is the catalog itself. The previous shape was a
+ * single column, and it made the statistics unavailable: a filter whose size you
+ * cannot see is a filter nobody clicks.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-market-own',
@@ -26,16 +30,19 @@ window.__ModuleLoader__.load({
     const react = require('react')
     const h = react.createElement
 
-    /** The host routes this half talks to. Distinguished from dshmarket's. */
+    /** The host routes this half talks to. */
     const API = '/dsh-market-own/api'
     const SECTION_ID = 'dsh-market-own'
     const ORDER = 41
+    const PAGE = 60
 
-    /** Copy, kept in one table so the section reads in either language. */
+    /** Copy, in one table so the section reads in either language. */
     const TEXT = {
       zh: {
         nav: '我的市场',
         search: '搜索插件 / 作者 / 描述…',
+        all: '全部',
+        categories: '插件类型',
         sortScore: '综合分数',
         sortStars: 'Star 数',
         sortDownloads: '下载次数',
@@ -47,17 +54,19 @@ window.__ModuleLoader__.load({
         installing: '安装中…',
         installed: '已安装',
         failed: '失败',
-        copied: '命令已复制',
-        empty: '没有匹配的插件',
+        empty: '该分类下没有匹配的插件',
         unreachable: '目录加载失败',
         repaired: '已自动修复',
-        installable: '可安装',
-        needsEvidence: '未验证',
-        footer: (n, total, when) => `${n} / ${total} 个插件 · 更新于 ${when}`,
+        unverified: '未验证',
+        stats: (types, total) => `${types} 个类型 · ${total} 个插件`,
+        shown: (n, matched, total) => `显示 ${n} / 匹配 ${matched} / 共 ${total}`,
+        updated: (when) => `更新于 ${when}`,
       },
       en: {
         nav: 'My Market',
         search: 'Search plugins, authors, descriptions…',
+        all: 'All',
+        categories: 'Plugin types',
         sortScore: 'Score',
         sortStars: 'Stars',
         sortDownloads: 'Downloads',
@@ -69,31 +78,29 @@ window.__ModuleLoader__.load({
         installing: 'Installing…',
         installed: 'Installed',
         failed: 'Failed',
-        copied: 'Command copied',
-        empty: 'No matching plugins',
+        empty: 'No matching plugins in this category',
         unreachable: 'Catalog failed to load',
         repaired: 'Repaired automatically',
-        installable: 'Installable',
-        needsEvidence: 'Unverified',
-        footer: (n, total, when) => `${n} / ${total} plugins · updated ${when}`,
+        unverified: 'Unverified',
+        stats: (types, total) => `${types} types · ${total} plugins`,
+        shown: (n, matched, total) => `showing ${n} / matched ${matched} / of ${total}`,
+        updated: (when) => `updated ${when}`,
       },
     }
 
     /**
      * Pick the copy table.
      *
-     * Deliberately reads the document/navigator rather than injecting the host's
-     * locale service: a service named in `inject` must exist or cordis refuses to
-     * load the plugin at all, and this half only needs to choose between two
-     * tables. Fewer injected services means fewer host versions that can refuse
-     * it, and the user's own language setting is right there in the document.
+     * Reads the document rather than injecting the host's locale service: a service
+     * named in `inject` must exist or cordis refuses to load the plugin at all, and
+     * this half only chooses between two tables. Fewer injected services means
+     * fewer host versions that can refuse it.
      */
     function resolveText() {
       try {
         const declared = typeof document !== 'undefined' ? String(document.documentElement?.lang ?? '') : ''
         const preferred = typeof navigator !== 'undefined' ? String(navigator.language ?? '') : ''
-        const tag = (declared || preferred).toLowerCase()
-        if (tag.startsWith('en')) return TEXT.en
+        if ((declared || preferred).toLowerCase().startsWith('en')) return TEXT.en
       } catch { /* a host without a document still renders */ }
       return TEXT.zh
     }
@@ -103,6 +110,15 @@ window.__ModuleLoader__.load({
       if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`
       if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}k`
       return String(value)
+    }
+
+    /** Label for a category id, from the catalog's own dictionary. */
+    function labelOf(categories, id, text) {
+      if (id === '') return text.all
+      const entry = categories === undefined || categories === null ? undefined : categories[id]
+      if (entry === undefined || entry === null) return id
+      const lang = text === TEXT.en ? 'en' : 'zh'
+      return entry[lang] ?? entry.en ?? id
     }
 
     /** One plugin card. */
@@ -119,11 +135,10 @@ window.__ModuleLoader__.load({
           description ? h('div', { className: 'dshmo-desc' }, description) : null,
           h('div', { className: 'dshmo-meta' },
             h('span', { className: `dshmo-tag dshmo-tag-${plugin.targetKind ?? 'unknown'}` }, plugin.targetKind ?? 'unknown'),
-            plugin.category ? h('span', { className: 'dshmo-tag' }, plugin.category) : null,
-            plugin.installable === false ? h('span', { className: 'dshmo-tag dshmo-warn' }, text.needsEvidence) : null,
             h('span', { className: 'dshmo-num' }, `★ ${fmt(plugin.stars)}`),
             h('span', { className: 'dshmo-num' }, `↓ ${fmt(plugin.downloads)}`),
             h('span', { className: 'dshmo-num' }, `score ${fmt(plugin.score)}`),
+            plugin.installable === false ? h('span', { className: 'dshmo-tag dshmo-warn' }, text.unverified) : null,
           ),
         ),
         h('button', {
@@ -135,13 +150,14 @@ window.__ModuleLoader__.load({
       )
     }
 
-    /** The market section: search, sort, list, install. */
+    /** The market section: category index on the left, catalog on the right. */
     function MarketSection(props) {
       const ctx = props.ctx
       const text = react.useMemo(() => resolveText(), [])
       const [query, setQuery] = react.useState('')
       const [sort, setSort] = react.useState('score')
       const [kind, setKind] = react.useState('')
+      const [category, setCategory] = react.useState('')
       const [data, setData] = react.useState(null)
       const [error, setError] = react.useState(null)
       const [status, setStatus] = react.useState(null)
@@ -151,9 +167,10 @@ window.__ModuleLoader__.load({
         setError(null)
         setStatus(text.loading)
         try {
-          const params = new URLSearchParams({ sort, limit: '60' })
+          const params = new URLSearchParams({ sort, limit: String(PAGE) })
           if (query.trim() !== '') params.set('q', query.trim())
           if (kind !== '') params.set('kind', kind)
+          if (category !== '') params.set('category', category)
           const res = await fetch(`${API}/catalog?${params}`)
           const body = await res.json()
           if (body.error) {
@@ -170,7 +187,7 @@ window.__ModuleLoader__.load({
         } finally {
           setStatus(null)
         }
-      }, [query, sort, kind, text])
+      }, [query, sort, kind, category, text])
 
       react.useEffect(() => {
         const timer = setTimeout(() => { void load() }, 200)
@@ -202,11 +219,56 @@ window.__ModuleLoader__.load({
       }, [text])
 
       const plugins = (data && data.plugins) || []
+      const categories = (data && data.categories) || {}
+      // The index keeps only buckets that hold something and orders them by size:
+      // a zero-count category is not a filter, and the taxonomy order that suits a
+      // documentation page reads as noise in a navigation list.
+      const index = react.useMemo(() => Object.entries(categories)
+        .map(([id, meta]) => ({ id, label: labelOf(categories, id, text), count: (meta && meta.count) || 0 }))
+        .filter((row) => row.count > 0)
+        .sort((a, b) => b.count - a.count), [categories, text])
+
+      const total = (data && data.count) || 0
+      // `data.matched` is absent only while nothing has loaded, and `data` is null
+      // then — the previous form tested `(data && data.matched) !== undefined`,
+      // which is TRUE for a null `data`, so the offline path threw instead of
+      // rendering the "catalog unreachable" state it exists to show.
+      const matched = data === null ? plugins.length : (data.matched ?? plugins.length)
       const footer = data
-        ? text.footer(plugins.length, data.count ?? plugins.length, data.updated ? new Date(data.updated).toLocaleString() : '-')
+        ? [
+          text.shown(plugins.length, matched, total),
+          text.stats(index.length, total),
+          data.updated ? text.updated(new Date(data.updated).toLocaleString()) : '',
+        ].filter(Boolean).join(' · ')
         : ''
 
-      return h('div', { className: 'dshmo' },
+      // ---- left column: the type index, which is also the filter -------------
+      const nav = h('nav', { className: 'dshmo-nav', 'aria-label': text.categories },
+        h('div', { className: 'dshmo-nav-title' }, text.categories),
+        h('button', {
+          type: 'button',
+          key: '__all',
+          className: `dshmo-nav-row${category === '' ? ' dshmo-nav-active' : ''}`,
+          'aria-pressed': category === '',
+          onClick: () => setCategory(''),
+        },
+        h('span', { className: 'dshmo-nav-label' }, text.all),
+        h('span', { className: 'dshmo-nav-count' }, fmt(total)),
+        ),
+        index.map((row) => h('button', {
+          key: row.id,
+          type: 'button',
+          className: `dshmo-nav-row${category === row.id ? ' dshmo-nav-active' : ''}`,
+          'aria-pressed': category === row.id,
+          onClick: () => setCategory(category === row.id ? '' : row.id),
+        },
+        h('span', { className: 'dshmo-nav-label' }, row.label),
+        h('span', { className: 'dshmo-nav-count' }, fmt(row.count)),
+        )),
+      )
+
+      // ---- right column: search, list, install -------------------------------
+      const main = h('div', { className: 'dshmo-main' },
         h('div', { className: 'dshmo-bar' },
           h('input', {
             type: 'search',
@@ -228,22 +290,26 @@ window.__ModuleLoader__.load({
             h('option', { value: 'tarball' }, 'tarball'),
           ),
         ),
-        h('div', { className: 'dshmo-status' }, error ?? status ?? footer),
-        error ? h('button', { type: 'button', className: 'dshmo-install', onClick: () => void load() }, text.retry) : null,
+        h('div', { className: 'dshmo-status' }, error !== null ? error : (status !== null ? status : footer)),
+        error !== null
+          ? h('button', { type: 'button', className: 'dshmo-install', onClick: () => { void load() } }, text.retry)
+          : null,
         plugins.length === 0 && error === null
           ? h('div', { className: 'dshmo-empty' }, status === null ? text.empty : '')
           : null,
         h('div', { className: 'dshmo-list' },
-          plugins.map((plugin, index) => h(Card, {
+          plugins.map((plugin, i) => h(Card, {
             key: `${plugin.name}-${plugin.install}`,
             plugin,
-            index,
+            index: i,
             text,
             state: busy[plugin.name],
             onInstall: install,
           })),
         ),
       )
+
+      return h('div', { className: 'dshmo' }, nav, main)
     }
 
     /** Injected services. `slots` is the only hard requirement. */
@@ -253,8 +319,8 @@ window.__ModuleLoader__.load({
 
     /** Register the settings section. */
     function apply(ctx) {
-      // Styles travel with the section, scoped by class prefix, so the plugin
-      // needs no build step and cannot leak rules into the host UI.
+      // Styles travel with the section, scoped by class prefix, so the plugin needs
+      // no build step and cannot leak rules into the host UI.
       ctx.effect(() => {
         const style = document.createElement('style')
         style.setAttribute('data-dsh-market-own', '')
@@ -273,23 +339,42 @@ window.__ModuleLoader__.load({
 
     /** Section styles. Prefixed so nothing here can affect the host. */
     const CSS = `
-.dshmo { display: flex; flex-direction: column; gap: 10px; padding: 4px 0 24px; }
+.dshmo { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 16px; padding: 4px 0 24px; align-items: start; }
+@media (max-width: 760px) { .dshmo { grid-template-columns: minmax(0, 1fr); } }
+
+.dshmo-nav { display: flex; flex-direction: column; gap: 2px; max-height: 62vh; overflow-y: auto;
+  padding: 4px; border: 1px solid var(--dsh-border, #e4e7ec); border-radius: 12px;
+  background: var(--dsh-surface, #fff); position: sticky; top: 8px; }
+@media (max-width: 760px) { .dshmo-nav { position: static; max-height: none; flex-direction: row; overflow-x: auto; } }
+.dshmo-nav-title { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; opacity: .6; padding: 6px 8px 2px; }
+@media (max-width: 760px) { .dshmo-nav-title { display: none; } }
+.dshmo-nav-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 9px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit;
+  cursor: pointer; text-align: left; white-space: nowrap; }
+.dshmo-nav-row:hover { background: var(--dsh-hover, rgba(127,127,127,.12)); }
+.dshmo-nav-active { background: var(--dsh-accent, #4d6bfe) !important; color: #fff; }
+.dshmo-nav-label { overflow: hidden; text-overflow: ellipsis; }
+.dshmo-nav-count { font-variant-numeric: tabular-nums; font-size: 11px; opacity: .7; }
+.dshmo-nav-active .dshmo-nav-count { opacity: .95; }
+
+.dshmo-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .dshmo-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.dshmo-search { flex: 1 1 220px; min-width: 160px; padding: 8px 12px; border-radius: 10px;
+.dshmo-search { flex: 1 1 200px; min-width: 140px; padding: 8px 12px; border-radius: 10px;
   border: 1px solid var(--dsh-border, #e4e7ec); background: var(--dsh-surface, #fff); color: inherit; font: inherit; }
 .dshmo-select { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--dsh-border, #e4e7ec);
   background: var(--dsh-surface, #fff); color: inherit; font: inherit; }
-.dshmo-status { font-size: 12px; opacity: .75; min-height: 16px; }
+.dshmo-status { font-size: 12px; opacity: .72; min-height: 16px; }
 .dshmo-empty { padding: 32px 0; text-align: center; opacity: .6; }
 .dshmo-list { display: flex; flex-direction: column; gap: 8px; }
-.dshmo-card { display: grid; grid-template-columns: 40px 1fr auto; gap: 12px; align-items: start;
+.dshmo-card { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; gap: 12px; align-items: start;
   padding: 12px 14px; border: 1px solid var(--dsh-border, #e4e7ec); border-radius: 12px;
   background: var(--dsh-surface, #fff); }
 .dshmo-rank { text-align: right; font-variant-numeric: tabular-nums; opacity: .55; font-weight: 600; }
+.dshmo-body { min-width: 0; }
 .dshmo-title { display: flex; gap: 8px; align-items: baseline; font-weight: 600; }
-.dshmo-title a { color: inherit; text-decoration: none; }
+.dshmo-title a { color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dshmo-title a:hover { text-decoration: underline; }
-.dshmo-owner { font-weight: 400; font-size: 12px; opacity: .6; }
+.dshmo-owner { font-weight: 400; font-size: 12px; opacity: .6; white-space: nowrap; }
 .dshmo-desc { font-size: 13px; opacity: .75; margin-top: 3px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .dshmo-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 7px; font-size: 12px; }
