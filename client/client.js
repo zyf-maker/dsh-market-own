@@ -546,17 +546,24 @@ window.__ModuleLoader__.load({
 @media (max-width: 860px) { .dshmo-grid { grid-template-columns: minmax(0, 1fr); } }
 
 /* --- left: the category index ------------------------------------------- */
-.dshmo-nav { display: flex; flex-direction: column; gap: 2px; max-height: 62vh; overflow-y: auto;
-  padding: 4px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px;
-  background: var(--dsw-alias-bg-layer-3); position: sticky; top: 8px; }
+/* The height cap is computed from the space the panel actually offers rather than
+   from a viewport fraction: at 62vh a 1002px-tall window gave 621px for content
+   needing 650px, so the index scrolled by 80px and its last entries were never
+   visible — which defeats the point of an index. `100vh - 120px` approximates
+   (panel = min(800, 100vh - 48)) minus the host header and padding. */
+.dshmo-nav { display: flex; flex-direction: column; gap: 1px; max-height: min(720px, calc(100vh - 120px));
+  overflow-y: auto; padding: 4px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-3); position: sticky; top: 8px; box-sizing: border-box; }
 @media (max-width: 860px) { .dshmo-nav { position: static; max-height: none; flex-direction: row; overflow-x: auto; } }
 .dshmo-nav-title { font: var(--dsw-font-xxxs-strong-11); letter-spacing: .06em; text-transform: uppercase;
-  color: var(--dsw-alias-label-tertiary); padding: 6px 8px 2px; }
+  color: var(--dsw-alias-label-tertiary); padding: 4px 8px 2px; }
 @media (max-width: 860px) { .dshmo-nav-title { display: none; } }
-/* 32px rows, not the host nav's 40px: 20 rows must fit the panel without scrolling,
-   because an index whose entries cannot all be seen is not an index. */
+/* 30px rows with a 1px gap: 20 rows + the title come to ~650px, which fits the panel
+   without scrolling. The host's own nav uses 40px, but it only has 7 entries — an
+   index whose entries cannot all be seen is not an index, and that trade is worth the
+   10px. */
 .dshmo-nav-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  min-height: 32px; padding: 4px 9px; border: 0; border-radius: 8px; background: none;
+  min-height: 30px; padding: 3px 9px; border: 0; border-radius: 8px; background: none;
   color: var(--dsw-alias-label-primary); font: var(--dsw-font-s-14); cursor: pointer;
   text-align: left; white-space: nowrap; transition: background .16s, color .16s; }
 .dshmo-nav-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
