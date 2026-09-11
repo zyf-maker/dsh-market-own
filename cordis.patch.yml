@@ -1,0 +1,8 @@
+# dsh bundle patch: inserts this plugin into a profile's layer stack.
+#
+# The host half is loaded from the package's `main`; the client half is listed
+# with its platform so the browser bundle graph picks it up. Both are required —
+# the host half answers the routes, the client half is what Settings renders.
+- insert:
+    - id: dsh-market-own
+      name: 'dsh-market-own'
