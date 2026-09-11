@@ -79,14 +79,22 @@ window.__ModuleLoader__.load({
       },
     }
 
-    /** The host's locale service, or the Chinese table when it is unavailable. */
-    function resolveText(ctx) {
+    /**
+     * Pick the copy table.
+     *
+     * Deliberately reads the document/navigator rather than injecting the host's
+     * locale service: a service named in `inject` must exist or cordis refuses to
+     * load the plugin at all, and this half only needs to choose between two
+     * tables. Fewer injected services means fewer host versions that can refuse
+     * it, and the user's own language setting is right there in the document.
+     */
+    function resolveText() {
       try {
-        if (ctx.locale && typeof ctx.locale.get === 'function') {
-          const current = ctx.locale.get()
-          if (current === 'en' || current === 'en-US') return TEXT.en
-        }
-      } catch { /* a host without a locale service still renders */ }
+        const declared = typeof document !== 'undefined' ? String(document.documentElement?.lang ?? '') : ''
+        const preferred = typeof navigator !== 'undefined' ? String(navigator.language ?? '') : ''
+        const tag = (declared || preferred).toLowerCase()
+        if (tag.startsWith('en')) return TEXT.en
+      } catch { /* a host without a document still renders */ }
       return TEXT.zh
     }
 
@@ -130,7 +138,7 @@ window.__ModuleLoader__.load({
     /** The market section: search, sort, list, install. */
     function MarketSection(props) {
       const ctx = props.ctx
-      const text = react.useMemo(() => resolveText(ctx), [ctx])
+      const text = react.useMemo(() => resolveText(), [])
       const [query, setQuery] = react.useState('')
       const [sort, setSort] = react.useState('score')
       const [kind, setKind] = react.useState('')
@@ -259,7 +267,7 @@ window.__ModuleLoader__.load({
         name: 'settings.section',
         id: SECTION_ID,
         order: ORDER,
-        label: () => resolveText(ctx).nav,
+        label: () => resolveText().nav,
       }, () => h(MarketSection, { ctx })))
     }
 
