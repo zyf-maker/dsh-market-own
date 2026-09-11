@@ -549,8 +549,10 @@ window.__ModuleLoader__.load({
 /* The height cap is computed from the space the panel actually offers rather than
    from a viewport fraction: at 62vh a 1002px-tall window gave 621px for content
    needing 650px, so the index scrolled by 80px and its last entries were never
-   visible — which defeats the point of an index. `100vh - 120px` approximates
-   (panel = min(800, 100vh - 48)) minus the host header and padding. */
+   visible, which defeats the point of an index. The subtraction approximates
+   (panel = min(800, 100vh - 48)) minus the host header and padding.
+   NOTE: this stylesheet is a template literal, so no backticks may appear in these
+   comments — one would terminate the string and take the whole section with it. */
 .dshmo-nav { display: flex; flex-direction: column; gap: 1px; max-height: min(720px, calc(100vh - 120px));
   overflow-y: auto; padding: 4px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px;
   background: var(--dsw-alias-bg-layer-3); position: sticky; top: 8px; box-sizing: border-box; }
