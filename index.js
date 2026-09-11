@@ -102,6 +102,7 @@ export function apply(ctx) {
         const q = (url.searchParams.get('q') ?? '').toLowerCase()
         const sort = url.searchParams.get('sort') ?? 'score'
         const kind = url.searchParams.get('kind') ?? ''
+        const category = url.searchParams.get('category') ?? ''
         const limit = Math.min(Number(url.searchParams.get('limit') ?? 60) || 60, 200)
         let rows = data.plugins ?? []
         if (q !== '') {
@@ -109,14 +110,24 @@ export function apply(ctx) {
             `${p.name} ${p.owner} ${p.description?.en ?? ''} ${p.description?.zh ?? ''}`.toLowerCase().includes(q))
         }
         if (kind !== '') rows = rows.filter((p) => (p.targetKind ?? '') === kind)
+        if (category !== '') rows = rows.filter((p) => (p.category ?? '') === category)
+        const matched = rows.length
         const key = sort === 'stars' ? 'stars' : sort === 'downloads' ? 'downloads' : sort === 'name' ? 'name' : 'score'
         rows = key === 'name'
           ? [...rows].sort((a, b) => String(a.name).localeCompare(String(b.name)))
           : [...rows].sort((a, b) => (b[key] ?? 0) - (a[key] ?? 0))
         sendJson(res, 200, {
           updated: data.updated,
+          // `count` is the whole catalog and `matched` is what the filters allow, so
+          // the UI can say "showing 60 / matched 812 / of 10695" rather than
+          // presenting a filtered view as the total.
           count: data.count,
-          total: rows.length,
+          matched,
+          // Global category counts, deliberately NOT narrowed by the current filter:
+          // the index is how a reader discovers where plugins live, and counts that
+          // shrink with the filter make every other bucket look empty.
+          categories: data.categories ?? {},
+          categoryStats: data.stats?.category ?? null,
           plugins: rows.slice(0, limit),
         })
       } catch (error) {
