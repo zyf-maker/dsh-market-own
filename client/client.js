@@ -59,6 +59,7 @@ window.__ModuleLoader__.load({
         repaired: '已自动修复',
         unverified: '未验证',
         stats: (types, total) => `${types} 个类型 · ${total} 个插件`,
+        discovered: '自动发现的类型',
         shown: (n, matched, total) => `显示 ${n} / 匹配 ${matched} / 共 ${total}`,
         updated: (when) => `更新于 ${when}`,
       },
@@ -83,6 +84,7 @@ window.__ModuleLoader__.load({
         repaired: 'Repaired automatically',
         unverified: 'Unverified',
         stats: (types, total) => `${types} types · ${total} plugins`,
+        discovered: 'Auto-discovered type',
         shown: (n, matched, total) => `showing ${n} / matched ${matched} / of ${total}`,
         updated: (when) => `updated ${when}`,
       },
@@ -224,7 +226,15 @@ window.__ModuleLoader__.load({
       // a zero-count category is not a filter, and the taxonomy order that suits a
       // documentation page reads as noise in a navigation list.
       const index = react.useMemo(() => Object.entries(categories)
-        .map(([id, meta]) => ({ id, label: labelOf(categories, id, text), count: (meta && meta.count) || 0 }))
+        .map(([id, meta]) => ({
+          id,
+          label: labelOf(categories, id, text),
+          count: (meta && meta.count) || 0,
+          // A category the pipeline discovered rather than one designed by hand.
+          // Marked by tooltip only: an emergent bucket is still a normal bucket, and
+          // decorating the sidebar for it would make the taxonomy look unstable.
+          auto: Boolean(meta && meta.auto),
+        }))
         .filter((row) => row.count > 0)
         .sort((a, b) => b.count - a.count), [categories, text])
 
@@ -260,6 +270,7 @@ window.__ModuleLoader__.load({
           type: 'button',
           className: `dshmo-nav-row${category === row.id ? ' dshmo-nav-active' : ''}`,
           'aria-pressed': category === row.id,
+          ...(row.auto ? { title: text.discovered } : {}),
           onClick: () => setCategory(category === row.id ? '' : row.id),
         },
         h('span', { className: 'dshmo-nav-label' }, row.label),
