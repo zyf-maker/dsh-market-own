@@ -103,32 +103,81 @@ export function apply(ctx) {
         const sort = url.searchParams.get('sort') ?? 'score'
         const kind = url.searchParams.get('kind') ?? ''
         const category = url.searchParams.get('category') ?? ''
+        const page = Math.max(1, Number(url.searchParams.get('page') ?? 1) || 1)
         const limit = Math.min(Number(url.searchParams.get('limit') ?? 60) || 60, 200)
-        let rows = data.plugins ?? []
-        if (q !== '') {
-          rows = rows.filter((p) =>
-            `${p.name} ${p.owner} ${p.description?.en ?? ''} ${p.description?.zh ?? ''}`.toLowerCase().includes(q))
-        }
-        if (kind !== '') rows = rows.filter((p) => (p.targetKind ?? '') === kind)
-        if (category !== '') rows = rows.filter((p) => (p.category ?? '') === category)
+
+        const matchesQuery = (p) => q === ''
+          || `${p.name} ${p.owner} ${p.description?.en ?? ''} ${p.description?.zh ?? ''}`.toLowerCase().includes(q)
+        const matchesKind = (p) => kind === '' || (p.targetKind ?? '') === kind
+
+        // Global match count, computed over the WHOLE catalog independently of the
+        // category filter. Without it a search inside a category that has no match
+        // is indistinguishable from a search that has none anywhere — and "the whole
+        // catalog has 340 of these, just not in this category" is the answer the
+        // reader actually needs.
+        const globalMatched = q === '' && kind === ''
+          ? data.count
+          : (data.plugins ?? []).filter((p) => matchesQuery(p) && matchesKind(p)).length
+
+        let rows = (data.plugins ?? []).filter((p) => matchesQuery(p) && matchesKind(p) && (category === '' || (p.category ?? '') === category))
         const matched = rows.length
-        const key = sort === 'stars' ? 'stars' : sort === 'downloads' ? 'downloads' : sort === 'name' ? 'name' : 'score'
-        rows = key === 'name'
-          ? [...rows].sort((a, b) => String(a.name).localeCompare(String(b.name)))
-          : [...rows].sort((a, b) => (b[key] ?? 0) - (a[key] ?? 0))
+
+        // A row carries what the card needs to say something even when popularity is
+        // silent: `sources.length` is the only signal available for the third of the
+        // catalog with neither stars nor downloads, and `riskFlags` is the only fact
+        // that changes whether installing is safe.
+        const decorate = (p) => ({
+          name: p.name,
+          owner: (p.repoPath ?? '').split('/')[0] || p.owner || '',
+          url: p.url,
+          category: p.category,
+          description: p.description ?? {},
+          install: p.install,
+          targetKind: p.targetKind,
+          stars: p.stars ?? 0,
+          downloads: p.downloads ?? 0,
+          score: p.score ?? 0,
+          version: p.version ?? '',
+          added: p.added ?? '',
+          sourceCount: Array.isArray(p.sources) ? p.sources.length : 0,
+          riskFlags: Array.isArray(p.riskFlags) ? p.riskFlags : [],
+          // `null` marks an install target whose manifest could not be read. It is
+          // listed without a working install button rather than hidden, because
+          // hiding it would turn a network failure into "this plugin does not exist".
+          installable: p.installable ?? true,
+        })
+
+        const compare = {
+          score: (a, b) => (b.score - a.score) || (b.stars - a.stars) || (b.downloads - a.downloads)
+            || String(b.added).localeCompare(String(a.added)) || a.name.localeCompare(b.name),
+          stars: (a, b) => (b.stars - a.stars) || (b.downloads - a.downloads) || (b.score - a.score) || a.name.localeCompare(b.name),
+          downloads: (a, b) => (b.downloads - a.downloads) || (b.stars - a.stars) || (b.score - a.score) || a.name.localeCompare(b.name),
+          newest: (a, b) => String(b.added).localeCompare(String(a.added)) || (b.score - a.score) || a.name.localeCompare(b.name),
+          name: (a, b) => a.name.localeCompare(b.name),
+        }[sort] ?? null
+
+        rows = compare === null ? rows : [...rows].sort(compare)
+        const offset = (page - 1) * limit
+        const pageRows = rows.slice(offset, offset + limit).map(decorate)
+
         sendJson(res, 200, {
           updated: data.updated,
-          // `count` is the whole catalog and `matched` is what the filters allow, so
-          // the UI can say "showing 60 / matched 812 / of 10695" rather than
-          // presenting a filtered view as the total.
+          // `count` is the whole catalog, `globalMatched` is what the search and
+          // install-kind filters allow, and `matched` adds the category — three
+          // numbers so "showing / in this category / in the catalog" can all be told
+          // apart on screen.
           count: data.count,
+          globalMatched,
           matched,
+          page,
+          limit,
+          hasMore: offset + pageRows.length < matched,
           // Global category counts, deliberately NOT narrowed by the current filter:
           // the index is how a reader discovers where plugins live, and counts that
           // shrink with the filter make every other bucket look empty.
           categories: data.categories ?? {},
           categoryStats: data.stats?.category ?? null,
-          plugins: rows.slice(0, limit),
+          plugins: pageRows,
         })
       } catch (error) {
         // A market that cannot reach its catalog says so; it never shows
