@@ -17,10 +17,16 @@
 import { mkdirSync, writeFileSync, rmSync, appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
-// The repair rules live with the ingest half and are reused here rather than
-// copied: two implementations of "what makes a plugin incompatible" would drift
-// apart, and the one a user actually hits is this one.
-import { planRepair } from '../ingest/compat.mjs'
+// The repair rules are shared with the ingest half rather than copied: two
+// implementations of "what makes a plugin incompatible" would drift apart, and
+// the one a user actually hits is this one.
+//
+// `./ingest/compat.mjs`, NOT `../ingest/...`. As a path inside the package the
+// file ships with it; one level up it resolves to `node_modules/ingest/`, which
+// only exists while the plugin is a sibling of the ingest directory in a
+// working copy — so the host half loaded during development and failed the
+// moment the package was installed from a repository.
+import { planRepair } from './ingest/compat.mjs'
 
 export const name = 'dsh-market-own'
 
