@@ -1,0 +1,26 @@
+{
+  "name": "dsh-market-own",
+  "version": "0.1.0",
+  "description": "Own plugin market for DeepSeek Harness: serves a self-built multi-source catalog, installs in harness format, and repairs a plugin's compatibility instead of failing.",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/zyf-maker/dsh-market-own.git" },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web" }
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client/client.js",
+    "ingest/compat.mjs",
+    "cordis.patch.yml",
+    "package.json"
+  ]
+}
