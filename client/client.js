@@ -2,42 +2,48 @@
  * DSH Market (own) — client half.
  *
  * Loaded by the host's module loader, which injects `require`. Only `react` is
- * required, deliberately: another market plugin depended on four named exports of
- * the host's ui-primitives and disabled itself when any was missing, so a host
- * older than rc.6 showed nothing at all. Rendering from one stable dependency keeps
- * this working across host versions.
+ * required, deliberately: another market plugin depended on four named exports of the
+ * host's ui-primitives and disabled itself when any was missing, so a host older than
+ * rc.6 showed nothing at all. Rendering from one stable dependency keeps this working
+ * across host versions.
  *
- * Hand-written in the loader's factory format rather than bundled, because the
- * format is small and a build step would add a toolchain to a plugin whose whole job
- * is to read JSON and render a list.
+ * Hand-written in the loader's factory format rather than bundled, because the format
+ * is small and a build step would add a toolchain to a plugin whose whole job is to
+ * read JSON and render a list.
  *
  * Registration contract, taken from the host's settings seat:
  *   ctx.slots.inject('settings.section', () => ctx.slots.register(descriptor, Component))
  *
  * ## Layout
  *
- * Two columns. The left is the category index — every category the catalog uses,
- * with its count — which is both the type statistic and the filter. The right is the
- * catalog, in a responsive grid: one column on a narrow panel, two when there is
- * room. Available width at the default panel size is 1080 − 188 (host nav) − 48
- * (host padding) = 844px, so two columns are only reachable on a wide window; that
- * is what the grid breakpoints encode.
+ * Controls across the top, category chips directly under them, then the catalog as a
+ * GRID of cards reading left to right.
+ *
+ * An earlier revision put categories in a left sidebar and the cards in one column,
+ * which made the cards a vertical list and pushed the type statistics into a rail
+ * that had to scroll to show all 19 entries. Both were wrong for a catalog of ten
+ * thousand plugins: reading a marketplace is scanning, and scanning wants width.
+ * The settings outlet leaves ~844px at the default panel size, which is three columns
+ * at a 240px readability floor — measured, not assumed.
  *
  * ## Styling
  *
  * Every colour resolves through a `--dsw-alias-*` token, the host's real namespace.
- * An earlier version of this file used `--dsh-border` / `--dsh-surface` / `--dsh-accent`
- * with light-mode literals as fallbacks; nothing in the host defines those names, so
- * the literals always won and the section rendered white cards on a dark panel — the
- * exact failure the host's own `ModelsSection.module.css` warns about. There is also
- * no theme selector here: the token VALUES are rebound by `body[data-ds-dark-theme]`,
- * so dark mode needs no code.
+ * An earlier version used `--dsh-border` / `--dsh-surface` / `--dsh-accent` with
+ * light-mode literals as fallbacks; nothing in the host defines those names, so the
+ * literals always won and the section rendered white cards on a dark panel — the exact
+ * failure the host's own `ModelsSection.module.css` warns about. There is also no
+ * theme selector here: the token VALUES are rebound by `body[data-ds-dark-theme]`, so
+ * dark mode needs no code.
  *
  * Numbers (font sizes, paddings, radii) follow the host's settings convention so the
- * section reads as native: body 14px/22, muted 13px, hints 12px, badges 11px/17,
- * card padding 14px 16px, radius 12px. The one deliberate deviation is the index row
- * height — 32px rather than the host's 40px — because 20 rows at 40px exceed the
- * panel height and a category index whose entries cannot all be seen is not an index.
+ * section reads as native: body 14px/22, muted 13px, hints 12px, badges 11px/17, card
+ * padding 14px 16px, radius 12px.
+ *
+ * NOTE for future edits: the stylesheet below is a TEMPLATE LITERAL that spans the
+ * whole CSS. A backtick in a comment — even quoting a CSS value — terminates it early
+ * and takes the entire section down silently. `tests/client.test.mjs` asserts none is
+ * present, because the symptom is a market that simply is not there.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-market-own',
@@ -55,7 +61,7 @@ window.__ModuleLoader__.load({
     const ORDER = 41
     /** Rows per request. "Load more" adds another page of this size. */
     const PAGE = 60
-    /** Title of the synthetic bucket, pinned to the end of the index. */
+    /** The fallback bucket, pinned to the end of the chip row. */
     const OTHER = 'other'
 
     /**
@@ -96,7 +102,7 @@ window.__ModuleLoader__.load({
         emptyInCategory: '本分类内没有匹配的插件',
         unreachable: '目录加载失败',
         repaired: '已自动修复',
-        unproven: '未能验证安装方式，暂不可安装',
+        unproven: '未能验证安装方式',
         more: '加载更多',
         loadingMore: '加载中…',
         footer: (shown, matched, total) => `显示 ${shown} / 匹配 ${matched} / 共 ${total}`,
@@ -106,7 +112,6 @@ window.__ModuleLoader__.load({
         updated: (when) => `更新于 ${when}`,
         sources: (n) => `${n} 处收录`,
         auto: '自动发现的分类',
-        reveal: '在仓库中打开',
       },
       en: {
         nav: 'My Market',
@@ -132,7 +137,7 @@ window.__ModuleLoader__.load({
         emptyInCategory: 'No matching plugins in this category',
         unreachable: 'Catalog failed to load',
         repaired: 'Repaired automatically',
-        unproven: 'Install target unverified; cannot install yet',
+        unproven: 'Install target unverified',
         more: 'Load more',
         loadingMore: 'Loading…',
         footer: (shown, matched, total) => `showing ${shown} / matched ${matched} / of ${total}`,
@@ -142,7 +147,6 @@ window.__ModuleLoader__.load({
         updated: (when) => `updated ${when}`,
         sources: (n) => `listed by ${n}`,
         auto: 'Auto-discovered category',
-        reveal: 'Open repository',
       },
     }
 
@@ -162,7 +166,7 @@ window.__ModuleLoader__.load({
       return TEXT.zh
     }
 
-    /** Compact numbers, so a count never widens a column. */
+    /** Compact numbers, so a count never widens a chip. */
     const fmt = (n) => {
       const value = Number(n) || 0
       if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`
@@ -190,14 +194,12 @@ window.__ModuleLoader__.load({
      *
      * Derived from the repository owner, NOT the `owner` field: 94 rows disagree
      * between the two and the field holds npm-ish handles (`GitHub Actions`,
-     * `morlay_null`) that would 404 or resolve to a stranger. `repoPath` is present
-     * for 99.5% of rows; the rest fall back to initials.
-     *
-     * @returns `{ src, initial, hue }` — `src` is null when an avatar cannot exist.
+     * `morlay_null`) that would 404 or resolve to a stranger. `repoPath` covers 99.5%
+     * of rows; the rest fall back to initials.
      */
     function avatarOf(plugin) {
       const login = String(plugin.owner ?? '').trim()
-      const valid = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(login) && !/\s/.test(login)
+      const valid = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(login)
       let hue = 0
       for (let i = 0; i < login.length; i += 1) hue = (hue * 31 + login.charCodeAt(i)) % 360
       return {
@@ -207,18 +209,18 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** Behaviour of the description clamp: Chinese is dense, English is ~2.1× longer. */
+    /** English runs ~2.1x longer than Chinese for the same content. */
     const isCjk = (text) => /[\u4e00-\u9fff]/.test(text)
 
     /** One plugin card. */
-    function Card({ plugin, text, preferChinese, onInstall, state, onReveal }) {
+    function Card({ plugin, text, preferChinese, onInstall, state }) {
       const description = descriptionOf(plugin, preferChinese)
       const avatar = avatarOf(plugin)
       const [avatarFailed, setAvatarFailed] = react.useState(false)
       const flags = (plugin.riskFlags ?? []).filter((flag) => RISK[flag] !== undefined)
-      // Zero values are not rendered. Measured: 4018 plugins have no stars and 9059
-      // have no downloads, 3624 have neither — a third of all cards would otherwise
-      // show two dead zeros, which reads as "worthless" when the truth is "no data".
+      // Zero values are not rendered. Measured: 4018 plugins have no stars, 9059 have
+      // no downloads, 3624 have neither — a third of all cards would otherwise show
+      // two dead zeros, which reads as "worthless" when the truth is "no data".
       const hasStars = plugin.stars > 0
       const hasDownloads = plugin.downloads > 0
       const silent = !hasStars && !hasDownloads
@@ -257,11 +259,9 @@ window.__ModuleLoader__.load({
           : null,
         h('div', { className: 'dshmo-meta' },
           h('span', { className: `dshmo-tag dshmo-tag-${plugin.targetKind ?? 'unknown'}` }, plugin.targetKind ?? 'unknown'),
-          silent
-            // No popularity to show: the number of catalogs that list it is the only
-            // signal these rows have, and risk facts matter more than either.
-            ? h('span', { className: 'dshmo-num' }, text.sources(plugin.sourceCount ?? 0))
-            : null,
+          // No popularity to show: how many catalogs list it is the only signal these
+          // rows have, and the risk facts matter more than either.
+          silent ? h('span', { className: 'dshmo-num' }, text.sources(plugin.sourceCount ?? 0)) : null,
           hasStars ? h('span', { className: 'dshmo-num' }, `★ ${fmt(plugin.stars)}`) : null,
           hasDownloads ? h('span', { className: 'dshmo-num' }, `↓ ${fmt(plugin.downloads)}`) : null,
           flags.map((flag) => h('span', {
@@ -270,13 +270,13 @@ window.__ModuleLoader__.load({
             title: flag,
           }, RISK[flag][preferChinese ? 'zh' : 'en'])),
           plugin.installable === null
-            ? h('span', { className: 'dshmo-tag dshmo-warn', title: text.unproven }, text.unproven.slice(0, 4))
+            ? h('span', { className: 'dshmo-tag dshmo-warn', title: text.unproven }, text.unproven)
             : null,
         ),
       )
     }
 
-    /** The market section: category index on the left, catalog on the right. */
+    /** The market section: controls, category chips, then the catalog grid. */
     function MarketSection(props) {
       const ctx = props.ctx
       const text = react.useMemo(() => resolveText(), [])
@@ -297,8 +297,8 @@ window.__ModuleLoader__.load({
       /**
        * Fetch one page.
        *
-       * @param nextPage - the page to request; anything other than 1 replaces the
-       *   list (a filter changed), 1 appends (the reader asked for more).
+       * @param nextPage - the page to request. 1 replaces the list (a filter changed);
+       *   anything higher appends (the reader asked for more).
        */
       const load = react.useCallback(async (nextPage = 1) => {
         const appending = nextPage > 1
@@ -379,23 +379,24 @@ window.__ModuleLoader__.load({
       }, [text])
 
       const categories = (data && data.categories) || {}
-      const labelOf = react.useCallback((id, meta) => {
-        const lang = preferChinese ? 'zh' : 'en'
-        return meta?.[lang] ?? meta?.en ?? id
-      }, [preferChinese])
 
       /**
-       * The index, ordered by size with `other` pinned last.
+       * The chip row, ordered by size with `other` pinned last.
        *
-       * `other` holds 1273 plugins — the largest bucket — so sorting purely by size
+       * `other` holds ~1273 plugins — the largest bucket — so ordering purely by size
        * would put "unclassified" first, recommending the one entry that means "we
-       * could not tell". The rest stay size-ordered because a reader starts from
-       * where the plugins are.
+       * could not tell". The rest stay size-ordered because a reader starts from where
+       * the plugins are.
        */
-      const index = react.useMemo(() => Object.entries(categories)
-        .map(([id, meta]) => ({ id, label: labelOf(id, meta), count: meta?.count ?? 0, auto: Boolean(meta?.auto) }))
+      const chips = react.useMemo(() => Object.entries(categories)
+        .map(([id, meta]) => ({
+          id,
+          label: (preferChinese ? meta?.zh : meta?.en) ?? meta?.en ?? id,
+          count: meta?.count ?? 0,
+          auto: Boolean(meta?.auto),
+        }))
         .filter((row) => row.count > 0)
-        .sort((a, b) => (a.id === OTHER ? 1 : 0) - (b.id === OTHER ? 1 : 0) || b.count - a.count), [categories, labelOf])
+        .sort((a, b) => (a.id === OTHER ? 1 : 0) - (b.id === OTHER ? 1 : 0) || b.count - a.count), [categories, preferChinese])
 
       const total = (data && data.count) ?? 0
       const matched = (data && data.matched) ?? rows.length
@@ -408,97 +409,100 @@ window.__ModuleLoader__.load({
       const summary = data === null ? '' : [
         text.footer(rows.length, matched, total),
         filtered && inCategory !== null ? text.inCategory(globalMatched) : null,
+        text.types(chips.length),
         data.updated ? text.updated(new Date(data.updated).toLocaleString()) : null,
       ].filter(Boolean).join(' · ')
 
-      const nav = h('nav', { className: 'dshmo-nav', 'aria-label': text.categories },
-        h('div', { className: 'dshmo-nav-title' }, text.categories),
-        h('button', {
-          type: 'button',
-          key: '__all',
-          className: `dshmo-nav-row${category === '' ? ' dshmo-nav-active' : ''}`,
-          'aria-pressed': category === '',
-          onClick: () => setCategory(''),
-        },
-        h('span', { className: 'dshmo-nav-label' }, text.all),
-        h('span', { className: 'dshmo-nav-count' }, fmt(total)),
-        ),
-        index.map((row) => h('button', {
-          key: row.id,
-          type: 'button',
-          className: `dshmo-nav-row${category === row.id ? ' dshmo-nav-active' : ''}`,
-          'aria-pressed': category === row.id,
-          ...(row.auto ? { title: text.auto } : {}),
-          onClick: () => setCategory(category === row.id ? '' : row.id),
-        },
-        h('span', { className: 'dshmo-nav-label' }, row.label),
-        h('span', { className: 'dshmo-nav-count' }, fmt(row.count)),
-        )),
+      const chip = (row) => h('button', {
+        key: row.id,
+        type: 'button',
+        className: `dshmo-chip${category === row.id ? ' dshmo-chip-active' : ''}`,
+        'aria-pressed': category === row.id,
+        ...(row.auto ? { title: text.auto } : {}),
+        onClick: () => setCategory(category === row.id ? '' : row.id),
+      },
+      h('span', null, row.label),
+      h('span', { className: 'dshmo-chip-count' }, fmt(row.count)),
       )
 
-      const main = h('div', { className: 'dshmo-main' },
-        h('div', { className: 'dshmo-bar' },
-          h('input', {
-            ref: searchRef,
-            type: 'search',
-            className: 'dshmo-search',
-            placeholder: text.search,
-            value: query,
-            'aria-label': text.search,
-            onChange: (event) => setQuery(event.target.value),
-          }),
-          h('select', {
-            className: 'dshmo-select',
-            value: sort,
-            'aria-label': text.sort,
-            onChange: (event) => setSort(event.target.value),
-          },
-          h('option', { value: 'score' }, text.sortRecommended),
-          h('option', { value: 'stars' }, text.sortStars),
-          h('option', { value: 'downloads' }, text.sortDownloads),
-          h('option', { value: 'newest' }, text.sortNewest),
-          h('option', { value: 'name' }, text.sortName),
+      return h('div', { className: 'dshmo' },
+        h('div', { className: 'dshmo-inner' },
+          h('div', { className: 'dshmo-bar' },
+            h('input', {
+              ref: searchRef,
+              type: 'search',
+              className: 'dshmo-search',
+              placeholder: text.search,
+              value: query,
+              'aria-label': text.search,
+              onChange: (event) => setQuery(event.target.value),
+            }),
+            h('select', {
+              className: 'dshmo-select',
+              value: sort,
+              'aria-label': text.sort,
+              onChange: (event) => setSort(event.target.value),
+            },
+            h('option', { value: 'score' }, text.sortRecommended),
+            h('option', { value: 'stars' }, text.sortStars),
+            h('option', { value: 'downloads' }, text.sortDownloads),
+            h('option', { value: 'newest' }, text.sortNewest),
+            h('option', { value: 'name' }, text.sortName),
+            ),
+            h('select', {
+              className: 'dshmo-select',
+              value: kind,
+              'aria-label': text.target,
+              onChange: (event) => setKind(event.target.value),
+            },
+            h('option', { value: '' }, text.allTargets),
+            h('option', { value: 'npm' }, 'npm'),
+            h('option', { value: 'github' }, 'github'),
+            h('option', { value: 'tarball' }, 'tarball'),
+            ),
           ),
-          h('select', {
-            className: 'dshmo-select',
-            value: kind,
-            'aria-label': text.target,
-            onChange: (event) => setKind(event.target.value),
-          },
-          h('option', { value: '' }, text.allTargets),
-          h('option', { value: 'npm' }, 'npm'),
-          h('option', { value: 'github' }, 'github'),
-          h('option', { value: 'tarball' }, 'tarball'),
+          // The category row sits directly under the controls, where it reads as what
+          // it is: the second axis of the same filter, not a separate navigation.
+          h('div', { className: 'dshmo-cats', role: 'group', 'aria-label': text.categories },
+            h('button', {
+              type: 'button',
+              key: '__all',
+              className: `dshmo-chip${category === '' ? ' dshmo-chip-active' : ''}`,
+              'aria-pressed': category === '',
+              onClick: () => setCategory(''),
+            },
+            h('span', null, text.all),
+            h('span', { className: 'dshmo-chip-count' }, fmt(total)),
+            ),
+            chips.map(chip),
           ),
+          h('div', { className: 'dshmo-status', role: 'status' }, error !== null ? error : (status !== null ? status : summary)),
+          error !== null
+            ? h('button', { type: 'button', className: 'dshmo-install', onClick: () => { void load(1) } }, text.retry)
+            : null,
+          rows.length === 0 && error === null && status === null
+            ? h('div', { className: 'dshmo-empty' }, category === '' ? text.empty : text.emptyInCategory)
+            : null,
+          h('div', { className: 'dshmo-list' },
+            rows.map((plugin) => h(Card, {
+              key: `${plugin.name}-${plugin.install}`,
+              plugin,
+              text,
+              preferChinese,
+              state: busy[plugin.name],
+              onInstall: install,
+            })),
+          ),
+          data !== null && data.hasMore === true
+            ? h('button', {
+              type: 'button',
+              className: 'dshmo-more',
+              disabled: loadingMore,
+              onClick: () => { const next = page + 1; setPage(next); void load(next) },
+            }, loadingMore ? text.loadingMore : text.more)
+            : null,
         ),
-        h('div', { className: 'dshmo-status', role: 'status' }, error !== null ? error : (status !== null ? status : summary)),
-        error !== null
-          ? h('button', { type: 'button', className: 'dshmo-install', onClick: () => { void load(1) } }, text.retry)
-          : null,
-        rows.length === 0 && error === null && status === null
-          ? h('div', { className: 'dshmo-empty' }, category === '' ? text.empty : text.emptyInCategory)
-          : null,
-        h('div', { className: 'dshmo-list' },
-          rows.map((plugin) => h(Card, {
-            key: `${plugin.name}-${plugin.install}`,
-            plugin,
-            text,
-            preferChinese,
-            state: busy[plugin.name],
-            onInstall: install,
-          })),
-        ),
-        data !== null && data.hasMore === true
-          ? h('button', {
-            type: 'button',
-            className: 'dshmo-more',
-            disabled: loadingMore,
-            onClick: () => { const next = page + 1; setPage(next); void load(next) },
-          }, loadingMore ? text.loadingMore : text.more)
-          : null,
       )
-
-      return h('div', { className: 'dshmo' }, h('div', { className: 'dshmo-grid' }, nav, main))
     }
 
     /** Injected services. `slots` is the only hard requirement. */
@@ -508,9 +512,9 @@ window.__ModuleLoader__.load({
 
     /** Register the settings section. */
     function apply(ctx) {
-      // Styles travel with the section, scoped by a `dshmo` prefix, so the plugin
-      // needs no build step and cannot leak rules into the host UI. Injected once,
-      // guarded by the host's own `data-plugin-css` convention.
+      // Styles travel with the section, scoped by a `dshmo` prefix, so the plugin needs
+      // no build step and cannot leak rules into the host UI. Injected once, guarded by
+      // the host's own `data-plugin-css` convention.
       ctx.effect(() => {
         const marker = 'dsh-market-own/styles.css'
         if (document.querySelector(`style[data-plugin-css="${marker}"]`) !== null) return () => {}
@@ -537,49 +541,15 @@ window.__ModuleLoader__.load({
      * dark theme, and the host's own section CSS states the rule.
      */
     const CSS = `
-.dshmo { display: flex; flex-direction: column; gap: 12px; padding: 4px 0 24px; }
-/* The settings outlet renders this section with display:contents, so a max-width on
-   the root would do nothing; the cap goes on these inner wrappers, at the host's
-   own 760px convention. */
-.dshmo-grid { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 16px; align-items: start; max-width: 760px; }
-@media (min-width: 1180px) { .dshmo-grid { max-width: 1000px; } }
-@media (max-width: 860px) { .dshmo-grid { grid-template-columns: minmax(0, 1fr); } }
+.dshmo { display: block; padding: 4px 0 24px; }
+/* The settings outlet renders contributions through a display:contents anchor, so the
+   width cap lives on this inner wrapper. 1200px is generous for a card grid while
+   keeping a maximized panel from producing a wall of tiny cards. */
+.dshmo-inner { display: flex; flex-direction: column; gap: 12px; max-width: 1200px; }
 
-/* --- left: the category index ------------------------------------------- */
-/* The height cap is computed from the space the panel actually offers rather than
-   from a viewport fraction: at 62vh a 1002px-tall window gave 621px for content
-   needing 650px, so the index scrolled by 80px and its last entries were never
-   visible, which defeats the point of an index. The subtraction approximates
-   (panel = min(800, 100vh - 48)) minus the host header and padding.
-   NOTE: this stylesheet is a template literal, so no backticks may appear in these
-   comments — one would terminate the string and take the whole section with it. */
-.dshmo-nav { display: flex; flex-direction: column; gap: 1px; max-height: min(720px, calc(100vh - 120px));
-  overflow-y: auto; padding: 4px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px;
-  background: var(--dsw-alias-bg-layer-3); position: sticky; top: 8px; box-sizing: border-box; }
-@media (max-width: 860px) { .dshmo-nav { position: static; max-height: none; flex-direction: row; overflow-x: auto; } }
-.dshmo-nav-title { font: var(--dsw-font-xxxs-strong-11); letter-spacing: .06em; text-transform: uppercase;
-  color: var(--dsw-alias-label-tertiary); padding: 4px 8px 2px; }
-@media (max-width: 860px) { .dshmo-nav-title { display: none; } }
-/* 30px rows with a 1px gap: 20 rows + the title come to ~650px, which fits the panel
-   without scrolling. The host's own nav uses 40px, but it only has 7 entries — an
-   index whose entries cannot all be seen is not an index, and that trade is worth the
-   10px. */
-.dshmo-nav-row { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  min-height: 30px; padding: 3px 9px; border: 0; border-radius: 8px; background: none;
-  color: var(--dsw-alias-label-primary); font: var(--dsw-font-s-14); cursor: pointer;
-  text-align: left; white-space: nowrap; transition: background .16s, color .16s; }
-.dshmo-nav-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.dshmo-nav-row:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: -2px; }
-.dshmo-nav-active { background: var(--dsw-alias-state-business-primary); color: #fff; }
-.dshmo-nav-active:hover { background: var(--dsw-alias-state-business-primary); }
-.dshmo-nav-label { overflow: hidden; text-overflow: ellipsis; }
-.dshmo-nav-count { font: var(--dsw-font-xxxs-11); color: var(--dsw-alias-label-tertiary); font-variant-numeric: tabular-nums; }
-.dshmo-nav-active .dshmo-nav-count { color: rgba(255,255,255,.85); }
-
-/* --- right: controls, list, footer -------------------------------------- */
-.dshmo-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+/* --- controls ----------------------------------------------------------- */
 .dshmo-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.dshmo-search { flex: 1 1 200px; min-width: 140px; height: 34px; padding: 0 12px;
+.dshmo-search { flex: 1 1 240px; min-width: 160px; height: 34px; padding: 0 12px;
   border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px;
   background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: var(--dsw-font-s-14); }
 .dshmo-search::placeholder { color: var(--dsw-alias-label-tertiary); }
@@ -587,20 +557,36 @@ window.__ModuleLoader__.load({
   border-radius: 8px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
   font: var(--dsw-font-s-14); }
 .dshmo-search:focus-visible, .dshmo-select:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+
+/* --- category chips, directly under the controls ------------------------ */
+/* They wrap rather than scroll: with 20 entries a single scrollable row would hide
+   most of them, and the counts are the type statistic the row exists to show. */
+.dshmo-cats { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.dshmo-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12); cursor: pointer; white-space: nowrap;
+  transition: background .16s, color .16s, border-color .16s; }
+.dshmo-chip:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.dshmo-chip:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.dshmo-chip-active { background: var(--dsw-alias-state-business-primary); border-color: transparent; color: #fff; }
+.dshmo-chip-active:hover { background: var(--dsw-alias-state-business-primary); color: #fff; }
+.dshmo-chip-count { font: var(--dsw-font-xxxs-11); opacity: .75; font-variant-numeric: tabular-nums; }
+.dshmo-chip-active .dshmo-chip-count { opacity: .9; }
+
 .dshmo-status { font: var(--dsw-font-xxs-12); color: var(--dsw-alias-label-tertiary); min-height: 18px; }
 .dshmo-empty { padding: 32px 0; text-align: center; font: var(--dsw-font-s-14); color: var(--dsw-alias-label-tertiary); }
 
-/* One column by default, two when the panel is wide enough to give each card room:
-   the default settings panel leaves ~628px of content, which is one comfortable
-   column. */
-.dshmo-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
-@media (min-width: 1420px) { .dshmo-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* --- the catalog: cards read left to right ------------------------------ */
+/* auto-fill against a 240px readability floor. The settings panel leaves ~844px at
+   its default width, which yields three columns; a narrower panel yields two. */
+.dshmo-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
 
 .dshmo-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px;
   border: 1px solid var(--dsw-alias-border-l2); border-radius: 12px;
   background: var(--dsw-alias-bg-layer-3); transition: border-color .16s, background .16s; min-width: 0; }
 .dshmo-card:hover { border-color: var(--dsw-alias-label-dimmed); }
-.dshmo-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.dshmo-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .dshmo-avatar { flex: none; display: inline-flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; border-radius: 999px; overflow: hidden;
   background: hsl(var(--dshmo-hue, 220) 42% 46%); }
@@ -619,16 +605,15 @@ window.__ModuleLoader__.load({
 /* English runs ~2.1x longer than Chinese for the same content (median 113 vs 54
    characters), so it gets a third line rather than being truncated in most rows. */
 .dshmo-desc-latin { -webkit-line-clamp: 3; }
-.dshmo-meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.dshmo-meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: auto; }
 .dshmo-tag { padding: 1px 8px; border-radius: 999px; border: 1px solid var(--dsw-alias-border-l2);
   font: var(--dsw-font-xxxs-11); color: var(--dsw-alias-label-secondary); white-space: nowrap; }
-.dshmo-tag-github, .dshmo-tag-npm, .dshmo-tag-tarball { color: var(--dsw-alias-label-secondary); }
 .dshmo-risk { border-color: var(--dsw-alias-state-warn-primary); color: var(--dsw-alias-state-warn-label); }
 .dshmo-warn { border-color: var(--dsw-alias-state-warn-primary); color: var(--dsw-alias-state-warn-label); }
 .dshmo-num { font: var(--dsw-font-xxxs-11); color: var(--dsw-alias-label-tertiary); font-variant-numeric: tabular-nums; }
 .dshmo-install { flex: none; height: 28px; padding: 0 12px; border: 0; border-radius: 14px; cursor: pointer;
   background: var(--dsw-alias-state-business-primary); color: #fff; font: var(--dsw-font-xs-strong-13); }
-.dshmo-install:hover:not(:disabled) { background: var(--dsw-alias-state-business-primary); filter: brightness(1.06); }
+.dshmo-install:hover:not(:disabled) { filter: brightness(1.06); }
 .dshmo-install:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; }
 .dshmo-install:disabled { opacity: .55; cursor: not-allowed; }
 .dshmo-more { align-self: flex-start; height: 32px; padding: 0 14px; border-radius: 8px;
