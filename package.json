@@ -1,7 +1,7 @@
 {
   "name": "dsh-market-own",
   "version": "0.1.0",
-  "description": "Own plugin market for DeepSeek Harness: serves a self-built multi-source catalog, installs in harness format, and repairs a plugin's compatibility instead of failing.",
+  "description": "DSH Market, plugin half: the settings-section market for DeepSeek Harness — browses the published catalog, installs in harness format, and repairs a plugin's compatibility instead of failing. Catalog data and the public page live in dsh-catalog-merged.",
   "type": "module",
   "main": "index.js",
   "license": "MIT",
