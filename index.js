@@ -73,23 +73,32 @@ function optional(ctx, key) {
  *
  * Discovery signals are deliberately not treated as usefulness: a topic tag,
  * npm keyword, star count, or a directory's install command can all describe a
- * normal application rather than a Harness plugin. The pipeline's own
- * admission already decided that question — a row here carries
- * `installable: true` because a source catalog gave it a real install target,
- * or because admission read its manifest and found `dsh.bundle`. Re-trying
- * that question with weaker information only removes real plugins: requiring
- * manifest evidence here cut 11408 rows to 2999, dropping entries the catalog
- * had already admitted (every npm-targeted row, half the github-targeted ones)
- * because the ingest run never needs to probe a target a source declared.
+ * normal application rather than a Harness plugin. The pipeline's own admission
+ * already decided that question — a row here carries `installable: true` because
+ * a source catalog gave it a real install target, or because admission read its
+ * manifest and found `dsh.bundle`. Re-trying that question with weaker
+ * information only removes real plugins: requiring manifest evidence here cut
+ * 11408 rows to 2999, dropping entries the catalog had already admitted (every
+ * npm-targeted row, half the github-targeted ones) because the ingest run never
+ * needs to probe a target a source declared.
  *
- * So the only rows removed here are semantic shells — placeholder text, a name
- * that describes nothing, promotion-only entries. Everything else stays, and
- * the weaker evidence sorts lower rather than disappearing.
+ * The verdict itself is **published with the rows**: `ingest/index.mjs`
+ * annotates every catalog entry through `shared/quality.mjs`, and the published
+ * web page reads the same fields from the same module. So this function's job is
+ * to *use* that verdict, not to form a second opinion — two implementations is
+ * how the market came to show 10333 rows while the page showed 11538. The local
+ * rules below are the fallback for a catalog that carries no annotation yet
+ * (an older artifact, or a different `DSH_MARKET_CATALOG`), and they mirror the
+ * shared module exactly; keep the two in step.
  */
 function screenCatalog(raw, home) {
   const source = Array.isArray(raw?.plugins) ? raw.plugins : []
   const plugins = source
-    .map(entry => ({ ...entry, ...qualityOf(entry, home) }))
+    // A published verdict wins. A host-side check can only *add* evidence the
+    // ingest run could not have (an installed manifest), never remove a row.
+    .map(entry => (entry?.qualityState === undefined
+      ? { ...entry, ...qualityOf(entry, home) }
+      : entry))
     .filter(entry => entry.qualityState !== 'unverified')
   const categories = rebuildCategories(raw?.categories, plugins)
   const categoryStats = {
@@ -105,6 +114,19 @@ function screenCatalog(raw, home) {
   return { plugins, categories, categoryStats }
 }
 
+/**
+ * Text weight in "English character equivalents": a CJK ideograph counts as two
+ * Latin characters. An 18-character floor written for English rejected
+ * `talebook` — "一个简单好用的个人书库", 5765 stars — as an empty description.
+ */
+function textWeight(value) {
+  let weight = 0
+  for (const character of String(value ?? '')) {
+    weight += /[\u2e80-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/.test(character) ? 2 : 1
+  }
+  return weight
+}
+
 /** Score real plugin signals without making popularity the admission rule. */
 function qualityOf(entry, home) {
   const moduleName = String(entry?.npm || entry?.name || '').trim()
@@ -114,10 +136,11 @@ function qualityOf(entry, home) {
   const description = [entry?.description?.en, entry?.description?.zh]
     .map(value => String(value ?? '').trim())
     .find(value => value !== '') ?? ''
-  const meaningfulDescription = description.length >= 24 && !/^((test|demo|example|plugin|todo|tbd)[ .:_-]*)+$/i.test(description)
+  const meaningfulDescription = textWeight(description) >= SUBSTANTIVE_WEIGHT
+    && !/^((test|demo|example|plugin|todo|tbd)[ .:_-]*)+$/i.test(description)
   const searchable = `${entry?.name ?? ''} ${entry?.description?.en ?? ''} ${entry?.description?.zh ?? ''} ${(entry?.topics ?? []).join(' ')}`
   const dshRelevance = /\b(dsh|deepseek|harness|cordis)\b/i.test(searchable)
-  const judgment = judgePlugin(entry, searchable)
+  const judgment = judgePlugin(entry)
   const sourceCount = Array.isArray(entry?.sources) ? entry.sources.length : Number(entry?.sourceCount ?? 0)
   const stars = Math.max(0, Number(entry?.stars ?? 0) || 0)
   const downloads = Math.max(0, Number(entry?.downloads ?? 0) || 0)
@@ -129,9 +152,7 @@ function qualityOf(entry, home) {
     + (dshRelevance ? 10 : 0)
     + Math.min(8, sourceCount * 2)
     + recent
-    + Math.min(7, popularity)
-    + judgment.bonus)
-  const usefulSignal = meaningfulDescription || stars >= 25 || downloads >= 100 || sourceCount >= 2
+    + Math.min(7, popularity))
   // Admission follows the catalog's own verdict: a row that reaches here with a
   // target was either given that target by a source catalog or had its manifest
   // read by the ingest run's admission step. Requiring manifest evidence again
@@ -149,41 +170,52 @@ function qualityOf(entry, home) {
     sourceCount >= 2 ? 'multiple sources' : null,
     recent >= 5 ? 'recent activity' : null,
     popularity >= 5 ? 'usage signal' : null,
-    ...judgment.reasons,
+    judgment.reason,
   ].filter(Boolean)
   return { qualityState, qualityScore: score, qualityReasons }
 }
+
+/** Weights shared with `shared/quality.mjs`; see the note above `screenCatalog`. */
+const MIN_DESCRIPTION_WEIGHT = 12
+const SUBSTANTIVE_WEIGHT = 24
+
 /**
  * Apply a narrow semantic judgement to catch empty or nominal entries. This is
  * intentionally not a category blacklist: a real theme, market, red-team,
  * editor, or standalone tool is allowed to remain in the catalog.
+ *
+ * Two rules here were measured against production rows:
+ *
+ *   - length is weighed, not counted, so a terse Chinese description is not an
+ *     empty one;
+ *   - a placeholder phrase only rejects a row that also fails to say what it
+ *     does, because "Provides a placeholder UI element for the Tauri panel" is
+ *     a real plugin (2129 stars) whose real function is exactly that.
  */
-function judgePlugin(entry, searchable) {
+function judgePlugin(entry) {
   const name = String(entry?.name ?? '').trim()
   const descriptions = [entry?.description?.en, entry?.description?.zh]
     .map(value => String(value ?? '').trim())
     .filter(Boolean)
   const description = descriptions.join(' ')
   const text = `${name} ${description}`
-  const placeholderRules = [
-    { pattern: /(?:coming soon|work in progress|placeholder|lorem ipsum|not implemented|待实现|待完善|占位|暂无内容)/i, reason: 'placeholder or unfinished entry' },
-    { pattern: /^(?:dsh|deepseek|harness)?\s*(?:plugin|插件|extension|扩展|addon)(?:\s+(?:for|for dsh|相关))?[.!。 ]*$/i, reason: 'no concrete function described' },
-  ]
-  const placeholder = placeholderRules.find(rule => rule.pattern.test(text))
-  if (placeholder !== undefined) return { verdict: 'exclude', bonus: -100, reasons: [placeholder.reason] }
-
-  const concreteCapability = /(?:支持|提供|实现|允许|自动|管理|查看|生成|导出|同步|搜索|识别|调用|连接|增强|安装|更新|监控|审计|接入|渲染|编辑|回滚|路由|工作流|记忆|上下文|模型|工具|浏览器|图片|视觉|通知|智能体|团队|角色|编辑器|市场|皮肤|主题|红队|测试|验证|防护|Supports|Provides|Enables|Adds|Automates|Manage|View|Generate|Export|Sync|Search|Detect|Connect|Enhance|Install|Update|Monitor|Audit|Integrat|Render|Edit|Rollback|Route|Workflow|Memory|Context|Model|Tool|Browser|Image|Vision|Notify)/i.test(description)
-  const promotionOnly = /(?:求\s*star|求收藏|求关注|welcome\s*to\s*star|please\s*star)/i.test(text)
-  if (promotionOnly && !concreteCapability && description.length < 42) {
-    return { verdict: 'exclude', bonus: -100, reasons: ['promotion-only entry'] }
+  const weight = textWeight(description)
+  const concreteCapability = /(?:支持|提供|实现|允许|自动|管理|查看|生成|导出|同步|搜索|识别|调用|连接|增强|安装|更新|监控|审计|接入|渲染|编辑|回滚|路由|工作流|记忆|上下文|模型|工具|浏览器|图片|视觉|通知|智能体|团队|角色|编辑器|市场|皮肤|主题|红队|测试|验证|防护|书库|面板|快捷|翻译|统计|备份|清理|Supports|Provides|Enables|Adds|Automates|Manage|View|Generate|Export|Sync|Search|Detect|Connect|Enhance|Install|Update|Monitor|Audit|Integrat|Render|Edit|Rollback|Route|Workflow|Memory|Context|Model|Tool|Browser|Image|Vision|Notify|Library|Dashboard)/i.test(description)
+  if (weight < MIN_DESCRIPTION_WEIGHT) {
+    return { verdict: 'exclude', reason: 'empty or nominal description' }
   }
-  if (description.length < 18 && !concreteCapability) {
-    return { verdict: 'exclude', bonus: -100, reasons: ['empty or nominal description'] }
+  const nominalName = /^(?:dsh|deepseek|harness)?[\s_-]*(?:plugin|插件|extension|扩展|addon)(?:\s+(?:for|for dsh|相关))?[.!。 ]*$/i
+  if (nominalName.test(name) && !concreteCapability && weight < SUBSTANTIVE_WEIGHT) {
+    return { verdict: 'exclude', reason: 'no concrete function described' }
   }
-  if (!concreteCapability && description.length < 42) {
-    return { verdict: 'exclude', bonus: -100, reasons: ['no concrete function described'] }
+  const placeholder = /(?:coming soon|work in progress|lorem ipsum|not implemented|待实现|待完善|占位|暂无内容)/i
+  if (placeholder.test(text) && !concreteCapability && weight < SUBSTANTIVE_WEIGHT) {
+    return { verdict: 'exclude', reason: 'placeholder or unfinished entry' }
   }
-  return { verdict: 'keep', bonus: 0, reasons: [] }
+  if (/(?:求\s*star|求收藏|求关注|welcome\s*to\s*star|please\s*star)/i.test(text) && !concreteCapability) {
+    return { verdict: 'exclude', reason: 'promotion-only entry' }
+  }
+  return { verdict: 'keep', reason: null }
 }
 
 /** Rebuild category counts after low-signal rows have been removed. */
@@ -314,8 +346,15 @@ export function apply(ctx) {
         })
 
         const compare = {
+          // Quality decides the band; raw popularity decides the order **inside**
+          // it. Ordering by `qualityScore` inside the band instead buried a
+          // 8395-star plugin at position 10376: that score saturates at 100, and
+          // 45 of its points are withheld from the two thirds of the catalog the
+          // ingest run never probes. Mirrors `compareRecommended` in
+          // `dsh-catalog-merged/shared/quality.mjs`.
           score: (a, b) => (qualityRank(b.qualityState) - qualityRank(a.qualityState))
-            || (b.qualityScore - a.qualityScore) || (b.score - a.score) || (b.stars - a.stars) || (b.downloads - a.downloads)
+            || (b.score - a.score) || (b.stars - a.stars) || (b.downloads - a.downloads)
+            || (b.qualityScore - a.qualityScore)
             || String(b.added).localeCompare(String(a.added)) || a.name.localeCompare(b.name),
           stars: (a, b) => (b.stars - a.stars) || (b.downloads - a.downloads) || (b.score - a.score) || a.name.localeCompare(b.name),
           downloads: (a, b) => (b.downloads - a.downloads) || (b.stars - a.stars) || (b.score - a.score) || a.name.localeCompare(b.name),
