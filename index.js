@@ -23,7 +23,8 @@
  *   - a plugin must therefore `export const inject`, and every service it reads
  *     has to be listed there.
  */
-import { mkdirSync, writeFileSync, rmSync, appendFileSync, readFileSync, existsSync } from 'node:fs'
+import { mkdirSync, writeFileSync, rmSync, appendFileSync, readFileSync, existsSync, opendirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 // The repair rules are shared with the ingest half rather than copied: two
@@ -766,6 +767,55 @@ function checkoutRoot(entry) {
   return resolve(entry, '..')
 }
 
+/**
+ * A working directory a child process can actually start in.
+ *
+ * `checkoutRoot` answers "where can the loader find `tsx`", which is a question
+ * about module resolution. A spawning process needs a stronger property: an
+ * ordinary directory on a real filesystem. The two part ways under the packaged
+ * desktop app, where the CLI entry lives inside `app.asar`. There is no `tsx`
+ * there, so `checkoutRoot` falls back to the entry's own directory and hands
+ * back a path inside the archive.
+ *
+ * That path passes the checks one would naturally reach for and is still
+ * unusable. Electron patches `fs` so the archive is readable as a virtual
+ * directory: `existsSync`, `statSync().isDirectory()` and even `realpathSync`
+ * all succeed for it. Only the operating system can tell the difference, and it
+ * says so at the last moment, as `spawn <executable> ENOENT` — naming the
+ * executable, which plainly exists, instead of the directory that does not.
+ * `opendirSync` is the check that goes to the real filesystem, so it is the one
+ * that rejects the archive.
+ *
+ * Falling back to `process.cwd()` keeps the previous behaviour for a checkout,
+ * where the service already runs from the repository root; the harness home is
+ * the next best directory and always exists once the harness has started.
+ *
+ * @param candidate - Directory module resolution would prefer.
+ * @param home - Harness home, used when even the current directory is unusable.
+ */
+function spawnCwd(candidate, home) {
+  if (usableDirectory(candidate)) return candidate
+  const current = process.cwd()
+  if (usableDirectory(current)) return current
+  if (usableDirectory(home)) return home
+  return tmpdir()
+}
+
+/** Whether the operating system can open `candidate` as a directory. */
+function usableDirectory(candidate) {
+  if (typeof candidate !== 'string' || candidate === '') return false
+  let opened
+  try {
+    opened = opendirSync(candidate)
+    return true
+  } catch {
+    // Absent, unreadable, or inside app.asar: not a directory a process can use.
+    return false
+  } finally {
+    try { opened?.closeSync() } catch { /* the answer is already known */ }
+  }
+}
+
 /** Run the harness CLI and capture its output. */
 function runCli(home, args) {
   let invocation
@@ -775,7 +825,7 @@ function runCli(home, args) {
     return Promise.resolve({ code: 1, output: String(error?.message ?? error) })
   }
   return new Promise((resolve) => {
-    const child = spawn(invocation.command, invocation.argv, { cwd: invocation.cwd, windowsHide: true })
+    const child = spawn(invocation.command, invocation.argv, { cwd: spawnCwd(invocation.cwd, home), windowsHide: true })
     let output = ''
     child.stdout?.on('data', (chunk) => { output += String(chunk) })
     child.stderr?.on('data', (chunk) => { output += String(chunk) })
